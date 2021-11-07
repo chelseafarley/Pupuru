@@ -14,14 +14,74 @@ class ViewController: UIViewController {
     @IBOutlet var arView: ARView!
     var firstCard: Entity?
     var secondCard: Entity?
+    var anchor: AnchorEntity!
+    var scoreEntity: ModelEntity!
+    var playAgainEntity: ModelEntity!
     var score = 0;
+    let scales : [Float] = [
+        0.0015,
+        0.002,
+        0.002,
+        0.002,
+        0.0005,
+        0.008,
+        0.0025,
+        0.0005
+    ]
+    let centeredAnchorIndexes = [
+        0,
+        1,
+        5,
+        6
+    ]
+    let maoriWords = [
+        "karaka",
+        "pēre",
+        "kaputī",
+        "waka rererangi",
+        "kitā",
+        "uka",
+        "hautai",
+        "pouaka whakaata"
+    ]
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        let anchor = AnchorEntity(plane: .horizontal, minimumBounds: [0.2, 0.2])
+        anchor = AnchorEntity(plane: .horizontal, minimumBounds: [0.2, 0.2])
         arView.scene.addAnchor(anchor)
+        addOcclusionBox()
         
+        setupGame()
+    }
+    
+    func setupGame() {
+        score = 0
+        addScoreEntity()
+        let cards = setUpCards()
+        setUpPairs(cards: cards)
+    }
+    
+    func addScoreEntity() {
+        if (scoreEntity != nil) {
+            scoreEntity.removeFromParent()
+        }
+        
+        let wordEntity = getWordEntity(word: "Score: \(score)", fontSize: 0.02)
+        wordEntity.position = [wordEntity.position.x, wordEntity.position.y + 0.1, wordEntity.position.z - 0.1]
+        anchor.addChild(wordEntity)
+        scoreEntity = wordEntity
+    }
+    
+    func addOcclusionBox() {
+        let boxSize: Float = 1.5
+        let occlusionBoxMesh = MeshResource.generateBox(size: boxSize)
+        let occlusionBox = ModelEntity(mesh: occlusionBoxMesh, materials: [OcclusionMaterial()])
+        occlusionBox.position.y = -boxSize/2
+        anchor.addChild(occlusionBox)
+    }
+    
+    func setUpCards() -> [Entity] {
         var cards: [Entity] = []
         for _ in 1...16 {
             let box = MeshResource.generateBox(width: 0.04, height: 0.002, depth: 0.04)
@@ -42,38 +102,10 @@ class ViewController: UIViewController {
             anchor.addChild(card)
         }
         
-        let boxSize: Float = 1.5
-        let occlusionBoxMesh = MeshResource.generateBox(size: boxSize)
-        let occlusionBox = ModelEntity(mesh: occlusionBoxMesh, materials: [OcclusionMaterial()])
-        occlusionBox.position.y = -boxSize/2
-        anchor.addChild(occlusionBox)
-        
-        let scales : [Float] = [
-            0.0015,
-            0.002,
-            0.002,
-            0.002,
-            0.0005,
-            0.008,
-            0.0025,
-            0.0005
-        ]
-        let centeredAnchorIndexes = [
-            0,
-            1,
-            5,
-            6
-        ]
-        let maoriWords = [
-            "karaka",
-            "pēre",
-            "kaputī",
-            "waka rererangi",
-            "kitā",
-            "uka",
-            "hautai",
-            "pouaka whakaata"
-        ]
+        return cards
+    }
+    
+    func setUpPairs(cards: [Entity]) {
         var cancellable: AnyCancellable? = nil
         cancellable = ModelEntity.loadModelAsync(named: "01")
             .append(ModelEntity.loadModelAsync(named: "02"))
@@ -90,41 +122,69 @@ class ViewController: UIViewController {
             }, receiveValue: { entities in
                 var objects: [ModelEntity] = []
                 for (index, entity) in entities.enumerated() {
-                    let centeredAnchor = centeredAnchorIndexes.contains(index)
-                    let scale = scales[index]
-                    entity.setScale([scale, scale, scale], relativeTo: anchor)
-                    entity.generateCollisionShapes(recursive: true)
-                    objects.append(entity);
-                    entity.name = String(index)
+                    self.setup3DModel(entity: entity, index: index)
+                    objects.append(entity)
                     
-                    let wordMesh = MeshResource.generateText(maoriWords[index], extrusionDepth: 0.001, font: .systemFont(ofSize: 0.01))
-                    let wordMaterial = SimpleMaterial.init(color: .black, isMetallic: false)
-                    let wordEntity = ModelEntity(mesh: wordMesh, materials: [wordMaterial])
-                    let min = wordMesh.bounds.min
-                    let max = wordMesh.bounds.max
-                    wordEntity.position = [-max.x/2, entity.position.y, entity.position.z]
-                    wordEntity.name = String("word_\(index)")
-                    
+                    let wordEntity = self.createWordEntity(index: index)
                     objects.append(wordEntity)
-                    
-                    if (centeredAnchor) {
-                        let min = entity.model?.mesh.bounds.min
-                        let max = entity.model?.mesh.bounds.max
-                        entity.position = [entity.position.x, max!.y * scale + 0.002, entity.position.z]
-                    }
                 }
                 
                 objects.shuffle()
-                
-                for (index, object) in objects.enumerated() {
-                    cards[index].addChild(object)
-                    cards[index].transform.rotation = simd_quatf(angle: .pi, axis: [1, 0, 0])
-                }
-                
+                self.addEntitiesToCards(objects: objects, cards: cards)
                 cancellable?.cancel()
             })
     }
     
+    func setup3DModel(entity: ModelEntity, index: Int) {
+        let centeredAnchor = centeredAnchorIndexes.contains(index)
+        let scale = scales[index]
+        entity.setScale([scale, scale, scale], relativeTo: anchor)
+        entity.generateCollisionShapes(recursive: true)
+        entity.name = String(index)
+        
+        if (centeredAnchor) {
+            let min = entity.model?.mesh.bounds.min
+            let max = entity.model?.mesh.bounds.max
+            entity.position = [entity.position.x, max!.y * scale + 0.002, entity.position.z]
+        }
+    }
+    
+    func getWordEntity(word: String, fontSize: CGFloat) -> ModelEntity {
+        let wordMesh = MeshResource.generateText(word, extrusionDepth: 0.001, font: .systemFont(ofSize: fontSize))
+        let wordMaterial = SimpleMaterial.init(color: .black, isMetallic: false)
+        let wordEntity = ModelEntity(mesh: wordMesh, materials: [wordMaterial])
+        return wordEntity
+    }
+    
+    func createWordEntity(index: Int) -> ModelEntity {
+        let wordEntity = getWordEntity(word: maoriWords[index], fontSize: 0.01)
+        let min = wordEntity.model?.mesh.bounds.min
+        let max = wordEntity.model?.mesh.bounds.max
+        wordEntity.position = [-max!.x/2, wordEntity.position.y, wordEntity.position.z]
+        wordEntity.name = String("word_\(index)")
+        
+        return wordEntity
+    }
+    
+    func addEntitiesToCards(objects: [ModelEntity], cards: [Entity]) {
+        for (index, object) in objects.enumerated() {
+            cards[index].addChild(object)
+            cards[index].transform.rotation = simd_quatf(angle: .pi, axis: [1, 0, 0])
+        }
+    }
+    
+    func addPlayAgain() {
+        if (playAgainEntity == nil) {
+            let wordEntity = getWordEntity(word: "You win! Play again?", fontSize: 0.02)
+            playAgainEntity = wordEntity
+        }
+
+        anchor.addChild(playAgainEntity)
+    }
+    
+    func removePlayAgain() {
+        anchor.removeChild(playAgainEntity)
+    }
     
     @IBAction func onTap(_ sender: UITapGestureRecognizer) {
         if firstCard != nil && secondCard != nil {
@@ -133,8 +193,13 @@ class ViewController: UIViewController {
             if (firstCardIndex == secondCardIndex) {
                 // Matching cards, can remove these and increase score
                 score += 1
+                addScoreEntity()
                 firstCard?.removeFromParent()
                 secondCard?.removeFromParent()
+            
+                if (score == 8) {
+                    addPlayAgain()
+                }
             } else {
                 flipCardDown(card: firstCard!)
                 flipCardDown(card: secondCard!)
@@ -154,6 +219,11 @@ class ViewController: UIViewController {
                         flipCardUp(card: card)
                     }
                 }
+            }
+            
+            if (anchor.children.count == 3) {
+                removePlayAgain()
+                setupGame()
             }
         }
     }
